@@ -1,7 +1,73 @@
+# from flask import Flask, request, render_template, jsonify
+# import os
+# import torchaudio
+# from transformers import pipeline
+
+# app = Flask(__name__)
+
+# # Load Hugging Face audio classification pipeline
+# classifier = pipeline("audio-classification", model="mo-thecreator/Deepfake-audio-detection")
+
+# # Set up temporary directory for audio uploads
+# BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# TEMP_DIR = os.path.join(BASE_DIR, 'temp')
+# os.makedirs(TEMP_DIR, exist_ok=True)
+
+# @app.route('/')
+# def index():
+#     return render_template('index.html')
+
+# @app.route('/predict', methods=['POST'])
+# def predict():
+#     if 'audio' not in request.files:
+#         return jsonify({'error': 'No audio file provided'}), 400
+
+#     file = request.files['audio']
+#     if file.filename == '':
+#         return jsonify({'error': 'No selected file'}), 400
+
+#     # Validate file extension
+#     valid_extensions = {'.wav', '.mp3', '.flac'}
+#     file_ext = os.path.splitext(file.filename)[1].lower()
+#     if file_ext not in valid_extensions:
+#         return jsonify({'error': f"Invalid file format. Only {', '.join(valid_extensions)} allowed"}), 400
+
+#     # Save file
+#     file_path = os.path.join(TEMP_DIR, file.filename)
+#     file.save(file_path)
+
+#     try:
+#         # Convert to WAV at 16kHz
+#         waveform, sr = torchaudio.load(file_path)
+#         waveform = torchaudio.functional.resample(waveform, sr, 16000)
+#         converted_path = os.path.join(TEMP_DIR, 'converted.wav')
+#         torchaudio.save(converted_path, waveform, 16000)
+
+#         # Get predictions from pipeline
+#         results = classifier(converted_path)
+#         if not results:
+#             return jsonify({'error': 'Model returned no results'}), 500
+
+#         # Return top prediction
+#         top_result = results[0]
+#         return jsonify({
+#             'prediction': top_result['label'],
+#             'confidence': f"{top_result['score']:.2f}"
+#         })
+
+#     except Exception as e:
+#         app.logger.error(f"Prediction error: {str(e)}")
+#         return jsonify({'error': 'Failed to process audio file'}), 500
+
+# if __name__ == '__main__':
+#     app.run(debug=True)
+
+
+
 from flask import Flask, request, render_template, jsonify
 import os
-import numpy as np
-from tensorflow.keras.models import load_model
+import torchaudio
+from transformers import pipeline
 from utils.preprocess import preprocess_audio
 
 app = Flask(__name__)
@@ -9,11 +75,9 @@ app = Flask(__name__)
 # Use absolute path for temp directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_DIR = os.path.join(BASE_DIR, 'temp')
-MODEL_PATH = os.path.join(BASE_DIR, 'model', 'cnn_model11111.h5')
 
-# Load the model once
-model = load_model(MODEL_PATH)
-class_names = ['bonafide', 'spoof']  # Ensure the same order used during training
+# Load the Hugging Face pipeline once
+classifier = pipeline("audio-classification", model="mo-thecreator/Deepfake-audio-detection")
 
 @app.route('/')
 def index():
@@ -55,12 +119,14 @@ def predict():
     # Preprocess and predict
     try:
         app.logger.info(f"Preprocessing file: {file_path}")
-        X_input = preprocess_audio(file_path)
-        prediction = model.predict(X_input)
-        print("prediction:  "+str(prediction))
-        predicted_class = np.argmax(prediction, axis=1)[0]
-        label = class_names[predicted_class]
-        confidence = float(np.max(prediction))
+        converted_path = preprocess_audio(file_path)
+        app.logger.info(f"Predicting with file: {converted_path}")
+        results = classifier(converted_path)
+
+        # Extract the top prediction
+        top_result = max(results, key=lambda x: x['score'])
+        label = top_result['label']
+        confidence = top_result['score']
 
         return jsonify({
             'prediction': label,
@@ -70,13 +136,14 @@ def predict():
         app.logger.error(f"Error during preprocessing/prediction: {str(e)}")
         return jsonify({'error': 'Error processing audio file'}), 500
     finally:
-        # Comment out file deletion for debugging
-        # if os.path.exists(file_path):
-        #     try:
-        #         os.remove(file_path)
-        #         app.logger.info(f"Deleted file: {file_path}")
-        #     except Exception as e:
-        #         app.logger.error(f"Error deleting file: {str(e)}")
+        # Clean up files (uncomment for production)
+        # for path in [file_path, converted_path]:
+        #     if os.path.exists(path):
+        #         try:
+        #             os.remove(path)
+        #             app.logger.info(f"Deleted file: {path}")
+        #         except Exception as e:
+        #             app.logger.error(f"Error deleting file: {str(e)}")
         pass
 
 if __name__ == '__main__':
